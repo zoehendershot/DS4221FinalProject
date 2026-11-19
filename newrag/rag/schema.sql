@@ -16,8 +16,11 @@ CREATE TABLE IF NOT EXISTS documents (
     version     VARCHAR NOT NULL,       -- first 8 hex digits of sha1(text): which text we ingested
     n_chars     INTEGER NOT NULL,
     text        VARCHAR NOT NULL,       -- full article text, so re-chunking never needs the JSON files
-    ingested_at TIMESTAMP NOT NULL
+    ingested_at TIMESTAMP NOT NULL,
+    infobox_text VARCHAR DEFAULT ''     -- the side box as 'Label: value' lines ('' if none)
 );
+-- Databases made before infobox_text existed: add the column (no-op otherwise).
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS infobox_text VARCHAR DEFAULT '';
 
 -- One row per chunk. Several chunking configurations can live side by side
 -- (config 'sec600' = section chunker, 600-character limit), so changing the
