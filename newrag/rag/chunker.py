@@ -16,6 +16,11 @@ article's text into chunks that:
 Sections longer than the limit are split at paragraph breaks, then sentence
 ends, then spaces; small pieces are packed back together up to the limit.
 
+The infobox (the grey side box: motto, endowment, president, ...) becomes its
+own section, "Infobox", placed first. It is packed one "Label: value" line at
+a time, so a fact is never cut in half unless one line is over the limit.
+Files without an infobox_text field are chunked exactly as before.
+
 Run it on its own to write chunks.jsonl (one chunk per line) and print stats:
     python3 chunker.py                       # reads ../data
     python3 chunker.py --data-dir path/to/json/folder --out chunks.jsonl
@@ -48,6 +53,7 @@ SKIP_SECTIONS = {
 }
 
 INTRO = "Introduction"   # name given to the text before the first heading
+INFOBOX = "Infobox"      # section name for the side-box facts
 
 
 # ------------------------------------------------------------- loading
@@ -111,12 +117,12 @@ def _split_units(text: str, limit: int) -> list[str]:
     return [text[i:i + limit] for i in range(0, len(text), limit)]
 
 
-def _pack(units: list[str], limit: int) -> list[str]:
-    """Greedily join consecutive units with a space, up to limit characters."""
+def _pack(units: list[str], limit: int, sep: str = " ") -> list[str]:
+    """Greedily join consecutive units with sep, up to limit characters."""
     packed: list[str] = []
     current = ""
     for u in units:
-        candidate = f"{current} {u}" if current else u
+        candidate = f"{current}{sep}{u}" if current else u
         if len(candidate) <= limit:
             current = candidate
         else:
@@ -133,7 +139,11 @@ def chunk_document(doc: dict, max_chars: int = MAX_CHARS,
                    skip_sections: set[str] = SKIP_SECTIONS) -> list[dict]:
     """Chunks for one college document (a dict loaded from its JSON file)."""
     chunks = []
-    for path, body in split_sections(doc["text"]):
+    sections = list(split_sections(doc["text"]))
+    infobox_text = (doc.get("infobox_text") or "").strip()
+    if infobox_text:
+        sections.insert(0, ([INFOBOX], infobox_text))
+    for path, body in sections:
         if path[0].lower() in skip_sections:
             continue
         heading = f"{doc['title']} — {' > '.join(path)}"
@@ -141,7 +151,12 @@ def chunk_document(doc: dict, max_chars: int = MAX_CHARS,
         if budget < 100:                               # absurdly long heading
             heading = heading[: max_chars - 101].rstrip() + "…"
             budget = max_chars - len(heading) - 1
-        pieces = _pack(_split_units(body, budget), budget)
+        if path == [INFOBOX]:
+            # Keep each "Label: value" line whole and on its own line.
+            lines = [u for line in body.splitlines() for u in _split_units(line, budget)]
+            pieces = _pack(lines, budget, sep="\n")
+        else:
+            pieces = _pack(_split_units(body, budget), budget)
         for i, piece in enumerate(pieces, start=1):
             chunks.append({
                 "chunk_id": None,                      # filled in below
@@ -195,3 +210,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
