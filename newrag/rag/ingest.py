@@ -29,8 +29,10 @@ from chunker import DEFAULT_DATA_DIR, MAX_CHARS, chunk_document, load_documents
 from db import connect
 
 
-def doc_version(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+def doc_version(text: str, infobox_text: str = "") -> str:
+    # Without an infobox the hash is the same as before, so old chunk ids stay valid.
+    content = f"{text}\n\n{infobox_text}" if infobox_text else text
+    return hashlib.sha1(content.encode("utf-8")).hexdigest()[:8]
 
 
 def config_name(max_chars: int) -> str:
@@ -51,16 +53,19 @@ def ingest_documents(con, data_dir: str) -> int:
     now = datetime.datetime.now()
     rows = []
     for d in load_documents(data_dir):
-        version = doc_version(d["text"])
+        infobox_text = d.get("infobox_text") or ""   # older JSON files have no infobox
+        version = doc_version(d["text"], infobox_text)
         if d["doc_id"] in stored:
             if stored[d["doc_id"]] != version:
                 print(f"  note: {d['title']} changed since it was ingested; "
                       "keeping the stored version")
             continue
         rows.append((d["doc_id"], d.get("source", "wikipedia"), d["title"], d.get("url"),
-                     version, len(d["text"]), d["text"], now))
+                     version, len(d["text"]), d["text"], now, infobox_text))
     if rows:
-        con.executemany("INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        con.executemany(
+            "INSERT INTO documents (doc_id, source, title, url, version, n_chars, text, "
+            "ingested_at, infobox_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     return len(rows)
 
 
@@ -72,11 +77,13 @@ def ingest_chunks(con, max_chars: int) -> int:
     done = {r[0] for r in con.execute(
         "SELECT DISTINCT doc_id FROM chunks WHERE config = ?", [config]).fetchall()}
     rows = []
-    for doc_id, title, url, version, text in con.execute(
-            "SELECT doc_id, title, url, version, text FROM documents ORDER BY doc_id").fetchall():
+    for doc_id, title, url, version, text, infobox_text in con.execute(
+            "SELECT doc_id, title, url, version, text, infobox_text "
+            "FROM documents ORDER BY doc_id").fetchall():
         if doc_id in done:
             continue
-        doc = {"doc_id": doc_id, "title": title, "url": url, "text": text}
+        doc = {"doc_id": doc_id, "title": title, "url": url, "text": text,
+               "infobox_text": infobox_text or ""}
         for ordinal, c in enumerate(chunk_document(doc, max_chars)):
             rows.append((make_chunk_id(doc_id, version, config, ordinal), doc_id, config,
                          ordinal, c["section"], c["subsection"], c["heading"], c["text"],
@@ -109,3 +116,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
